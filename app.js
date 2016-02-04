@@ -6,8 +6,12 @@ var request = require('request');
 var redis = require('redis');
 var wrapper = require('co-redis');
 var serve = require('koa-static');
+var bodyParser = require('koa-bodyparser');
+var session = require('koa-generic-session');
+var redisStore = require('koa-redis');
 var koa = require('koa');
 var app = koa();
+var router = require('koa-router')();
 
 var MS_IN_MINUTE = 60000;
 var UPDATE_START_HOUR = 10;
@@ -211,26 +215,65 @@ co(function* () {
 });
 
 var template = swig.compileFile(path.join(__dirname, '/views/index.html'));
+var loginTemplate = swig.compileFile(path.join(__dirname, '/views/login.html'));
 
 app.use(serve(path.join(__dirname, '/static')));
+app.use(bodyParser());
+var secret;
+if (process.env.APP_SECRET) {
+  secret = process.env.APP_SECRET;
+} else {
+  secret = require('./config.json').appSecret;
+}
+app.keys = [secret];
+app.use(session({
+	store: redisStore({
+		client: client
+	})
+}));
 
-app.use(function *(){
-	updateAllDurations();
-	var routes = yield clientCo.lrange("routeData", 0, -1);
-	for (var i = 0; i < routes.length; i++) {
-		try {
-			var parsedJSON = JSON.parse(routes[i]);
-			routes[i] = parsedJSON;
-		} catch (e) {
-			// do nothing
-		}
+var passport = require('./auth')(client)
+app.use(passport.initialize());
+app.use(passport.session());
+
+router.get('/auth/facebook', passport.authenticate('facebook'));
+
+router.get('/auth/facebook/callback', passport.authenticate('facebook', {
+	successRedirect: '/',
+	failureRedirect: '/login'
+}));
+
+router.get('/login', function *(next) {
+	if (this.isAuthenticated()) {
+		this.redirect('/');
+	} else {
+		this.body = loginTemplate();
 	}
-	var lastUpdateTime = yield clientCo.get("lastUpdateTime");
-	this.body = template({
-		routes: routes,
-		minutesAgo: Math.round((Date.now() - lastUpdateTime)/1000/60)
-	});
-	
 });
+
+router.get('/', function *(next) {
+	if (this.isAuthenticated()) {
+		updateAllDurations();
+		var routes = yield clientCo.lrange("routeData", 0, -1);
+		for (var i = 0; i < routes.length; i++) {
+			try {
+				var parsedJSON = JSON.parse(routes[i]);
+				routes[i] = parsedJSON;
+			} catch (e) {
+				// do nothing
+			}
+		}
+		var lastUpdateTime = yield clientCo.get("lastUpdateTime");
+		this.body = template({
+			routes: routes,
+			minutesAgo: Math.round((Date.now() - lastUpdateTime)/1000/60)
+		});
+	} else {
+		this.redirect('/login');
+	}
+});
+
+app.use(router.routes());
+app.use(router.allowedMethods());
 
 app.listen(process.env.PORT || 3000);

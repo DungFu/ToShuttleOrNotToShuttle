@@ -6,13 +6,19 @@
   },
   "dependencies": {
     "co": "4.x",
-    "koa": "1.x",
-    "koa-static": "2.x",
-    "request": "2.x",
-    "redis": "2.x",
     "co-redis": "2.x",
-    "swig": "1.x",
-    "ping": "0.x"
+    "koa": "1.x",
+    "koa-bodyparser": "2.x",
+    "koa-generic-session": "1.x",
+    "koa-passport": "1.x",
+    "koa-redis": "2.x",
+    "koa-router": "5.x",
+    "koa-static": "2.x",
+    "passport-facebook": "2.x",
+    "ping": "0.x",
+    "redis": "2.x",
+    "request": "2.x",
+    "swig": "1.x"
   },
   "engines": {
     "node": "5.x",
