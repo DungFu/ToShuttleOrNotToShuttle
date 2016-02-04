@@ -5,6 +5,7 @@ var swig = require('swig');
 var request = require('request');
 var redis = require('redis');
 var wrapper = require('co-redis');
+var mongoose = require('mongoose');
 var serve = require('koa-static');
 var bodyParser = require('koa-bodyparser');
 var session = require('koa-generic-session');
@@ -232,7 +233,10 @@ app.use(session({
 	})
 }));
 
-var passport = require('./auth')(client)
+mongoose.connect(process.env.MONGOLAB_URI || require('./config.json').mongoUri);
+var User = require('./models/user')(mongoose);
+
+var passport = require('./auth')(User)
 app.use(passport.initialize());
 app.use(passport.session());
 

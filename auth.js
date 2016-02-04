@@ -7,14 +7,14 @@ if (process.env.FACEBOOK_CONFIG) {
   config = require('./config.json').facebookConfig;
 }
 
-module.exports = function(client) {
+module.exports = function(User) {
   passport.serializeUser(function(user, done) {
     done(null, user.id);
   });
 
   passport.deserializeUser(function (id, done) {
-    client.get("user-"+id, function(err, user) {
-      done(null, JSON.parse(user));
+    User.findOne({ id: id }, function (err, user) {
+      done(err, user);
     });
   });
 
@@ -26,17 +26,24 @@ module.exports = function(client) {
     },
     function(token, tokenSecret, profile, done) {
       var id = profile.id;
-      client.get("user-"+id, function(err, user) {
-        if (user != null) {
-          done(null, JSON.parse(user));
-        } else {
-          var newUser = {
+      User.findOne({ id: id }, function (err, user) {
+        if (err) {
+          return done(err);
+        }
+        if (!user) {
+          user = new User({
             id: id,
             name: profile.displayName
-          };
-          client.set("user-"+id, JSON.stringify(newUser), function(err, user) {
-            done(null, newUser);
           });
+          user.save(function (err) {
+            if (err) {
+              console.log(err);
+              return done(err);
+            }
+            return done(err, user);
+          });
+        } else {
+          return done(err, user);
         }
       });
     }

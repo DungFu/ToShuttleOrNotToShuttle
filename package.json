@@ -14,6 +14,7 @@
     "koa-redis": "2.x",
     "koa-router": "5.x",
     "koa-static": "2.x",
+    "mongoose": "4.x",
     "passport-facebook": "2.x",
     "ping": "0.x",
     "redis": "2.x",

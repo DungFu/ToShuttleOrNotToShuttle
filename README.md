@@ -6,7 +6,8 @@ Example:
 
 ```
 {
-  "mapsApiKey": "AIzaSyA83woM6I6nkJsy2KxoAquFmnyB77ZrjhA",
+  "mapsApiKey": "abcdefghijklmnopqrstuvwxyz",
+  "mongoUri": "mongodb://localhost:27017/myappname",
   "appSecret": "myappsecret",
   "facebookConfig": {
     "appId": "1234567890",
