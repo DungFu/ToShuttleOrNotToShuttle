@@ -251,6 +251,11 @@ router.get('/login', function *(next) {
 	}
 });
 
+router.get('/logout', function *(next){
+  this.logout();
+  this.redirect('/');
+});
+
 router.get('/', function *(next) {
 	if (this.isAuthenticated()) {
 		updateAllDurations();

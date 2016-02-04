@@ -30,6 +30,11 @@
 	.Fremont {
 		background-color: #92E2A8;
 	}
+	.logout {
+		position: absolute;
+		left: 10px;
+		top: 10px;
+	}
 	</style>
 </head>
 <body>
@@ -40,5 +45,6 @@
 		<li class="{{route[1]}}">{{route[0]}} ({{route[1]}}) - {{route[2]}} - {{route[3]}} min, {% if route[4] > 0 %}+{% endif %}{{route[4]}} min. ETA: {{route[5]}}</li>
 	{% endfor %}
 	</ul>
+	<div class="logout"><a href="/logout">Logout</a></div>
 </body>
 </html>
