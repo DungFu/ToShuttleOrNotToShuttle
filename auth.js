@@ -1,3 +1,4 @@
+var co = require('co');
 var passport = require('koa-passport');
 
 var config;
@@ -8,13 +9,14 @@ if (process.env.FACEBOOK_CONFIG) {
 }
 
 module.exports = function(User) {
-  passport.serializeUser(function(user, done) {
+  passport.serializeUser(function (user, done) {
     done(null, user.id);
   });
 
   passport.deserializeUser(function (id, done) {
-    User.findOne({ id: id }, function (err, user) {
-      done(err, user);
+    co(function *() {
+      var user = yield User.findOne({id: id});
+      done(null, user);
     });
   });
 
@@ -24,27 +26,22 @@ module.exports = function(User) {
       clientSecret: config.appSecret,
       callbackURL: config.appAddress + '/auth/facebook/callback'
     },
-    function(token, tokenSecret, profile, done) {
-      var id = profile.id;
-      User.findOne({ id: id }, function (err, user) {
-        if (err) {
-          return done(err);
-        }
+    function (token, tokenSecret, profile, done) {
+      co(function *() {
+        var user = yield User.findOne({id: profile.id});
         if (!user) {
           user = new User({
-            id: id,
+            id: profile.id,
             name: profile.displayName
           });
-          user.save(function (err) {
-            if (err) {
-              console.log(err);
-              return done(err);
-            }
-            return done(err, user);
-          });
+          yield user.save();
+          done(null, user);
         } else {
-          return done(err, user);
+          done(null, user);
         }
+      }).catch(function(err) {
+        console.error(err);
+        done(err);
       });
     }
   ));
