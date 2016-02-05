@@ -1,8 +1,9 @@
 var co = require('co');
+var forEach = require('co-foreach');
 var path = require('path');
 var url = require('url');
 var swig = require('swig');
-var request = require('request');
+var request = require("co-request");
 var redis = require('redis');
 var wrapper = require('co-redis');
 var mongoose = require('mongoose');
@@ -95,7 +96,8 @@ var routes = [
 	}
 ];
 
-var baseApiUrl = "https://maps.googleapis.com/maps/api/distancematrix/json?";
+var distanceMatrixApiUrl = "https://maps.googleapis.com/maps/api/distancematrix/json?";
+var timezoneApiUrl = "https://maps.googleapis.com/maps/api/timezone/json?";
 
 // Set up Heroku Redis
 var client;
@@ -107,21 +109,24 @@ if (process.env.REDIS_URL) {
 
 var clientCo = wrapper(client);
 
+function logError(err) {
+	console.error(err);
+}
+
 function pad(n, width) {
   n = n + '';
   return n.length >= width ? n : new Array(width - n.length + 1).join('0') + n;
 }
 
-function setData(index, routeData) {
-	client.llen("routeData", function(err, len) {
-		if (len > index) {
-			client.lset("routeData", index, JSON.stringify(routeData));
-		}
-	});
-}
+var setData = co.wrap(function *(index, routeData) {
+	var len = yield clientCo.llen("routeData")
+	if (len > index) {
+		yield clientCo.lset("routeData", index, JSON.stringify(routeData));
+	}
+});
 
-function updateDurations(route, offset, timezoneOffset) {
-	route.times.forEach(function(time, index) {
+var updateDurations = co.wrap(function *(route, offset, timezoneOffset) {
+	yield forEach(route.times, function *(time, index) {
 		var d = new Date(Date.now() + timezoneOffset);
 		d.setUTCHours(time.hour);
 		d.setUTCMinutes(time.minute);
@@ -132,71 +137,75 @@ function updateDurations(route, offset, timezoneOffset) {
 		}
 		var printTime = pad(d.getUTCHours(),2)+":"+pad(d.getUTCMinutes(),2)+" "+d.getUTCFullYear()+"/"+pad(d.getUTCMonth()+1, 2)+"/"+pad(d.getUTCDate(), 2);
 		var rDate = new Date(d.getTime() - timezoneOffset + time.addTime*MS_IN_MINUTE);
-		updateSingleDuration(offset+index, printTime, rDate, route, time, 0, 0, 0);
+		yield updateSingleDuration(offset+index, printTime, rDate, route, time, 0, 0, 0);
 	});
-}
+});
 
-function updateSingleDuration(index, printTime, rDate, route, time, leg, collectiveDuration, collectiveDiffDuration) {
+var fetchRouteData = co.wrap(function *(origin, dest, mode, departureTime) {
+	var routeResponse = yield request(distanceMatrixApiUrl+"origins="+origin+"&destinations="+dest+"&mode="+mode+"&departure_time="+departureTime+"&units=imperial&key="+mapsApiKey);
+	if (routeResponse.statusCode != 200) {
+		throw new Error("Invalid route response status code: " + routeResponse.statusCode);
+	}
+	var parsedBody = JSON.parse(routeResponse.body);
+	if (parsedBody.status != "OK") {
+		throw new Error("Invalid route body status: " + parsedBody.status);
+	}
+	return parsedBody;
+});
+
+var updateSingleDuration = co.wrap(function *(index, printTime, rDate, route, time, leg, collectiveDuration, collectiveDiffDuration) {
 	var rTime = Math.floor(rDate.getTime()/1000);
 	var eta = new Date();
 	eta.setHours(time.hour);
 	eta.setMinutes(time.minute);
-	request(
-		baseApiUrl+"origins="+route.legs[leg][0]+"&destinations="+route.legs[leg][1]+"&mode="+route.legs[leg][2]+"&departure_time="+rTime+"&units=imperial&key="+mapsApiKey,
-		function (error, response, body) {
-		  if (!error && response.statusCode == 200) {
-		  	var parsedBody = JSON.parse(body);
-		  	if (parsedBody.status == "OK") {
-		  		var duration = 0;
-		  		var diffDuration = 0;
-		  		if (parsedBody.rows[0].elements[0].duration_in_traffic == null) {
-		  			duration = parsedBody.rows[0].elements[0].duration.value;
-		  		} else {
-		  			duration = parsedBody.rows[0].elements[0].duration_in_traffic.value;
-		  			diffDuration = duration - parsedBody.rows[0].elements[0].duration.value;
-		  		}
-		  		if (leg == route.legs.length - 1) {
-		  			var totalDuration = collectiveDuration + duration + time.addTime*60;
-		  			var totalDiffDuration = collectiveDiffDuration + diffDuration;
-		  			eta = new Date(eta.getTime() + totalDuration*1000);
-		  			setData(index, [time.name, route.name, printTime, Math.round(totalDuration/60), Math.round(totalDiffDuration/60), String(eta.getHours())+":"+String(eta.getMinutes())]);
-		  		} else {
-		  			updateSingleDuration(index, printTime, new Date(rDate.getTime() + duration), route, time, leg+1, collectiveDuration + duration, collectiveDiffDuration + diffDuration);
-		  		}
-			} else {
-				setData(index, [time.name, route.name, printTime, 0, 0, printTime]);
-			}
-		  }
-		});
-}
+	var routeData = yield fetchRouteData(route.legs[leg][0], route.legs[leg][1], route.legs[leg][2], rTime);
+	var duration = 0;
+	var diffDuration = 0;
+	if (routeData.rows[0].elements[0].duration_in_traffic == null) {
+		duration = routeData.rows[0].elements[0].duration.value;
+	} else {
+		duration = routeData.rows[0].elements[0].duration_in_traffic.value;
+		diffDuration = duration - routeData.rows[0].elements[0].duration.value;
+	}
+	if (leg == route.legs.length - 1) {
+		var totalDuration = collectiveDuration + duration + time.addTime*60;
+		var totalDiffDuration = collectiveDiffDuration + diffDuration;
+		eta = new Date(eta.getTime() + totalDuration*1000);
+		yield setData(index, [time.name, route.name, printTime, Math.round(totalDuration/60), Math.round(totalDiffDuration/60), String(eta.getHours())+":"+String(eta.getMinutes())]);
+	} else {
+		yield updateSingleDuration(index, printTime, new Date(rDate.getTime() + duration), route, time, leg+1, collectiveDuration + duration, collectiveDiffDuration + diffDuration);
+	}
+});
 
-function updateAllDurations() {
-	request(
-		"https://maps.googleapis.com/maps/api/timezone/json?location=37,-122&timestamp="+Date.now()/1000+"&key="+mapsApiKey,
-		function(error, response, body) {
-			if (!error && response.statusCode == 200) {
-				var parsedBody = JSON.parse(body);
-			  	if (parsedBody.status == "OK") {
-			  		var timezoneOffset = parsedBody.rawOffset * 1000;
-					var date = new Date(Date.now() + timezoneOffset);
-					if (date.getUTCHours() >= UPDATE_START_HOUR && date.getUTCHours() <= UPDATE_END_HOUR) {
-						client.get("lastUpdateTime", function(err, lastUpdateTime) {
-							var now = Date.now();
-							if (lastUpdateTime == null || now - Number(lastUpdateTime) > 15*MS_IN_MINUTE) {
-								var offset = 0;
-								for (var i = 0; i < routes.length; i++) {
-									updateDurations(routes[i], offset, timezoneOffset);
-									offset += routes[i].times.length;
-								}
-								client.set("lastUpdateTime", now);
-								console.log("updating...");
-							}
-						});
-					}
-				}
+var fetchTimeZoneOffset = co.wrap(function *() {
+	var timezoneResponse = yield request(timezoneApiUrl+"location=37,-122&timestamp="+Date.now()/1000+"&key="+mapsApiKey);
+	if (timezoneResponse.statusCode != 200) {
+		throw new Error("Invalid timezone response status code: " + timezoneResponse.statusCode);
+	}
+	var parsedBody = JSON.parse(timezoneResponse.body);
+	if (parsedBody.status != "OK") {
+		throw new Error("Invalid timezone body status: " + parsedBody.status);
+	}
+	return parsedBody.rawOffset * 1000;
+});
+
+var updateAllDurations = co.wrap(function *() {
+	var timezoneOffset = yield fetchTimeZoneOffset();
+	var date = new Date(Date.now() + timezoneOffset);
+	if (date.getUTCHours() >= UPDATE_START_HOUR && date.getUTCHours() <= UPDATE_END_HOUR) {
+		var lastUpdateTime = yield clientCo.get("lastUpdateTime");
+		var now = Date.now();
+		if (lastUpdateTime == null || now - Number(lastUpdateTime) > 15*MS_IN_MINUTE) {
+			var offset = 0;
+			for (var i = 0; i < routes.length; i++) {
+				yield updateDurations(routes[i], offset, timezoneOffset);
+				offset += routes[i].times.length;
 			}
-		});
-}
+			yield clientCo.set("lastUpdateTime", now);
+			console.log("updating...");
+		}
+	}
+});
 
 var totalLength = 0;
 for (var i = 0; i < routes.length; i++) {
@@ -212,10 +221,10 @@ co(function* () {
 			yield clientCo.rpush("routeData", "");
 		}
 	}
-	updateAllDurations();
-});
+	yield updateAllDurations();
+}).catch(logError);
 
-var template = swig.compileFile(path.join(__dirname, '/views/index.html'));
+var rootTemplate = swig.compileFile(path.join(__dirname, '/views/index.html'));
 var loginTemplate = swig.compileFile(path.join(__dirname, '/views/login.html'));
 
 app.use(serve(path.join(__dirname, '/static')));
@@ -262,18 +271,21 @@ router.get('/logout', function *(next){
 
 router.get('/', function *(next) {
 	if (this.isAuthenticated()) {
-		updateAllDurations();
+		try {
+			yield updateAllDurations();
+		} catch (err) {
+			logError(err);
+		}
 		var routes = yield clientCo.lrange("routeData", 0, -1);
 		for (var i = 0; i < routes.length; i++) {
 			try {
-				var parsedJSON = JSON.parse(routes[i]);
-				routes[i] = parsedJSON;
-			} catch (e) {
-				// do nothing
+				routes[i] = JSON.parse(routes[i]);
+			} catch (err) {
+				logError(err);
 			}
 		}
 		var lastUpdateTime = yield clientCo.get("lastUpdateTime");
-		this.body = template({
+		this.body = rootTemplate({
 			routes: routes,
 			minutesAgo: Math.round((Date.now() - lastUpdateTime)/1000/60)
 		});

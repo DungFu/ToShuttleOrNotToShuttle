@@ -6,7 +6,9 @@
   },
   "dependencies": {
     "co": "4.x",
+    "co-foreach": "1.x",
     "co-redis": "2.x",
+    "co-request": "1.x",
     "koa": "1.x",
     "koa-bodyparser": "2.x",
     "koa-generic-session": "1.x",
